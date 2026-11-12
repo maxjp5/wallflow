@@ -255,6 +255,14 @@ def packs(cfg, screen, page=None):
     return out
 
 
+def favorites(cfg, screen, page=None):
+    import core  # local import to avoid a cycle
+    out = [Candidate(e["path"], "favorites", e["title"], e["page"], local=True) for e in core.list_favorites()]
+    if not out:
+        raise SourceError("You haven't saved any favorites yet")
+    return out
+
+
 SOURCES = {  # key -> (label, function)
     "wallhaven": ("Wallhaven", wallhaven),
     "unsplash": ("Unsplash", unsplash),
@@ -262,5 +270,6 @@ SOURCES = {  # key -> (label, function)
     "picsum": ("Picsum (random photos)", picsum),
     "local": ("My Folder", local),
     "packs": ("My Packs (offline)", packs),
+    "favorites": ("My Favorites", favorites),
 }
 PACK_SOURCES = ["wallhaven", "unsplash", "nasa"]   # sources you can download a pack from

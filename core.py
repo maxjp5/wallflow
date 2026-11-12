@@ -18,7 +18,7 @@ from PIL import Image, ImageOps
 import sources
 
 APP_NAME = "Wallflow"
-VERSION = "1.2.0"
+VERSION = "1.2.2"
 DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
@@ -27,9 +27,11 @@ PACKS_DIR = os.path.join(os.path.expanduser("~"), "Pictures", "Wallflow Packs")
 PACK_META = "wallflow-pack.json"
 MAX_DOWNLOAD = 40 * 1024 * 1024
 
+NO_ROTATE = "Don't rotate"
 INTERVALS = {  # label -> minutes
     "5 minutes": 5, "15 minutes": 15, "30 minutes": 30, "1 hour": 60,
     "3 hours": 180, "6 hours": 360, "12 hours": 720, "24 hours": 1440,
+    NO_ROTATE: 0,               # keep the current wallpaper until you press Next
 }
 
 DEFAULTS = {
@@ -44,6 +46,7 @@ DEFAULTS = {
         "picsum": {"enabled": True},
         "local": {"enabled": False, "folder": ""},
         "packs": {"enabled": False, "selected": []},
+        "favorites": {"enabled": False},
     },
     "start_with_windows": False,
     "start_hidden": True,       # when started by Windows, stay in the tray
@@ -52,6 +55,7 @@ DEFAULTS = {
     "theme": "Dark",
     "accent": "White",
     "mica": True,
+    "smooth_transition": True,  # cross-fade the desktop when the wallpaper changes
     "pause_on_battery": False,
     "pause_fullscreen": True,   # don't change while a game / full-screen app / presentation is up
     "check_updates": True,
@@ -170,11 +174,66 @@ def wallpaper_size(settings):
     return target_size(settings) if settings.get("match_screens", True) else screen_size()
 
 
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", ctypes.c_ulong), ("Data2", ctypes.c_ushort), ("Data3", ctypes.c_ushort),
+                ("Data4", ctypes.c_ubyte * 8)]
+
+    def __init__(self, text):
+        super().__init__()
+        ctypes.oledll.ole32.CLSIDFromString(ctypes.c_wchar_p(text), ctypes.byref(self))
+
+
+# IDesktopWallpaper: the modern wallpaper API. The visible cross-fade is done by
+# desktop_fade.py, which fades the old picture out on the desktop layer.
+_CLSID_DESKTOP_WALLPAPER = "{C2CF3110-460E-4fc1-B9D0-8A1C0C9CC4BD}"
+_IID_IDESKTOP_WALLPAPER = "{B92B56A9-8B55-4E14-9A89-0199BBB6F93B}"
+_POSITIONS = {"Center": 0, "Tile": 1, "Stretch": 2, "Fit": 3, "Fill": 4, "Span": 5}
+
+
+def _set_wallpaper_fade(path, style):
+    ole32 = ctypes.oledll.ole32
+    try:
+        ole32.CoInitialize(None)                      # fine if this thread already has COM
+    except OSError:
+        pass
+    obj = ctypes.c_void_p()
+    ole32.CoCreateInstance(ctypes.byref(_GUID(_CLSID_DESKTOP_WALLPAPER)), None, 0x17,   # CLSCTX_ALL
+                           ctypes.byref(_GUID(_IID_IDESKTOP_WALLPAPER)), ctypes.byref(obj))
+    vtbl = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+
+    def method(index, *argtypes):
+        return ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p, *argtypes)(vtbl[index])
+
+    try:
+        method(10, ctypes.c_int)(obj, _POSITIONS.get(style, 4))                       # SetPosition
+        method(3, ctypes.c_wchar_p, ctypes.c_wchar_p)(obj, None, os.path.abspath(path))  # SetWallpaper (all screens)
+    finally:
+        method(2)(obj)                                                                # Release
+
+
+def shown_wallpaper():
+    """The image Windows is displaying right now (its own copy, so it survives cache cleanup)."""
+    t = os.path.join(os.environ.get("APPDATA", ""), "Microsoft", "Windows", "Themes", "TranscodedWallpaper")
+    if os.path.isfile(t):
+        return t
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, DESKTOP_KEY) as k:
+            p = winreg.QueryValueEx(k, "WallPaper")[0]
+        return p if os.path.isfile(p) else ""
+    except OSError:
+        return ""
+
+
 def set_wallpaper(path, style="Fill"):
     ws, tile = STYLES.get(style, STYLES["Fill"])
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, DESKTOP_KEY, 0, winreg.KEY_SET_VALUE) as k:
         winreg.SetValueEx(k, "WallpaperStyle", 0, winreg.REG_SZ, ws)
         winreg.SetValueEx(k, "TileWallpaper", 0, winreg.REG_SZ, tile)
+    try:
+        _set_wallpaper_fade(path, style)
+        return
+    except OSError:
+        pass                                          # fall back to the old-style call
     # SPI_SETDESKWALLPAPER = 20, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE = 3
     if not ctypes.windll.user32.SystemParametersInfoW(20, 0, os.path.abspath(path), 3):
         raise ctypes.WinError()
@@ -208,7 +267,11 @@ def restore_original(settings):
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, DESKTOP_KEY, 0, winreg.KEY_SET_VALUE) as k:
         winreg.SetValueEx(k, "WallpaperStyle", 0, winreg.REG_SZ, o.get("style", "10"))
         winreg.SetValueEx(k, "TileWallpaper", 0, winreg.REG_SZ, o.get("tile", "0"))
-    ctypes.windll.user32.SystemParametersInfoW(20, 0, o["path"], 3)
+    style = next((n for n, v in STYLES.items() if v == (o.get("style", "10"), o.get("tile", "0"))), "Fill")
+    try:
+        _set_wallpaper_fade(o["path"], style)
+    except OSError:
+        ctypes.windll.user32.SystemParametersInfoW(20, 0, o["path"], 3)
 
 
 def launch_command():
@@ -453,9 +516,69 @@ def prune_cache(settings):
                 pass
 
 
+FAVORITES_META = "wallflow-favorites.json"
+
+
+def _fav_meta():
+    try:
+        with open(os.path.join(FAVORITES_DIR, FAVORITES_META), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_fav_meta(meta):
+    os.makedirs(FAVORITES_DIR, exist_ok=True)
+    with open(os.path.join(FAVORITES_DIR, FAVORITES_META), "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=1)
+
+
+def favorite_path(entry):
+    """Where this wallpaper lives (or would live) in the favorites folder."""
+    p = entry["path"]
+    if os.path.normcase(os.path.dirname(os.path.abspath(p))) == os.path.normcase(FAVORITES_DIR):
+        return p                                    # it already is a favorite file
+    return os.path.join(FAVORITES_DIR, f"{entry['source']}_{os.path.basename(p)}")
+
+
+def is_favorite(entry):
+    return bool(entry) and os.path.isfile(favorite_path(entry))
+
+
 def save_favorite(entry):
     os.makedirs(FAVORITES_DIR, exist_ok=True)
-    name = f"{entry['source']}_{os.path.basename(entry['path'])}"
-    dest = os.path.join(FAVORITES_DIR, name)
-    shutil.copy2(entry["path"], dest)
+    dest = favorite_path(entry)
+    if not os.path.isfile(dest):
+        shutil.copy2(entry["path"], dest)
+        os.utime(dest)                              # sort by when you saved it, newest first
+    meta = _fav_meta()
+    meta[os.path.basename(dest)] = {"title": entry.get("title", ""), "page": entry.get("page", ""),
+                                    "source": entry.get("source", ""), "ping": entry.get("ping", "")}
+    _write_fav_meta(meta)
     return dest
+
+
+def remove_favorite(entry):
+    dest = favorite_path(entry)
+    if os.path.isfile(dest):
+        os.remove(dest)
+    meta = _fav_meta()
+    if meta.pop(os.path.basename(dest), None) is not None:
+        _write_fav_meta(meta)
+
+
+def list_favorites():
+    """Favorites as history-style entries, newest first."""
+    if not os.path.isdir(FAVORITES_DIR):
+        return []
+    meta = _fav_meta()
+    out = []
+    for p in sources.list_images(FAVORITES_DIR):
+        if os.path.dirname(p) != FAVORITES_DIR:
+            continue                                # only the top folder
+        m = meta.get(os.path.basename(p), {})
+        src = m.get("source") or os.path.basename(p).split("_", 1)[0]
+        out.append({"path": p, "source": src, "title": m.get("title") or os.path.basename(p),
+                    "page": m.get("page") or p, "time": os.path.getmtime(p), "favorite": True})
+    out.sort(key=lambda e: e["time"], reverse=True)
+    return out

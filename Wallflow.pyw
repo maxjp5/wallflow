@@ -30,7 +30,7 @@ def build_window(ctl):
     from qfluentwidgets import (Action, FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition,
                                 NavigationItemPosition, PushButton, SystemTrayMenu)
 
-    from ui_home import HomePage
+    from ui_home import FavoritesPage, HomePage
     from ui_packs import PacksPage
     from ui_settings import SettingsPage
     from ui_sources import SourcesPage
@@ -49,9 +49,11 @@ def build_window(ctl):
 
             self.home = HomePage(ctl, self)
             self.sources = SourcesPage(ctl, self)
+            self.favorites = FavoritesPage(ctl, self)
             self.packs = PacksPage(ctl, self)
             self.settings_page = SettingsPage(ctl, self, self)
             self.addSubInterface(self.home, FIF.HOME, "Home")
+            self.addSubInterface(self.favorites, FIF.HEART, "Favorites")
             self.addSubInterface(self.sources, FIF.GLOBE, "Sources")
             self.addSubInterface(self.packs, FIF.LIBRARY, "Packs")
             self.addSubInterface(self.settings_page, FIF.SETTING, "Settings", NavigationItemPosition.BOTTOM)
@@ -112,9 +114,13 @@ def build_window(ctl):
 
         # ---------------------------------------------------- messages
         def on_status(self, kind, msg):
-            if kind == "error" and self.isVisible():
-                InfoBar.error("Couldn't get a wallpaper", msg, duration=6000,
+            if not self.isVisible():
+                return
+            if kind == "error":
+                InfoBar.error("Something went wrong", msg, duration=6000,
                               position=InfoBarPosition.TOP_RIGHT, parent=self)
+            elif kind == "fav":
+                InfoBar.success(msg, "", duration=2000, position=InfoBarPosition.TOP_RIGHT, parent=self)
 
         def on_update(self, ver, url):
             bar = InfoBar.info(f"Wallflow {ver} is available", "A newer version is on GitHub.",
@@ -141,6 +147,8 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     ctl = Controller()
+    from desktop_fade import DesktopFade
+    ctl.fader = DesktopFade()
     setTheme({"Light": Theme.LIGHT, "System": Theme.AUTO}.get(ctl.settings.get("theme"), Theme.DARK))
     from theme import AccentManager
     ctl.accent = AccentManager(ctl.settings)

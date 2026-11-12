@@ -95,6 +95,9 @@ class SettingsPage(ScrollArea):
         self.fit = self.combo(FITS, s["style"], self.on_fit)
         self.add(g, FIF.FIT_PAGE, "Fit on screen",
                  "Span stretches one image across all your screens", self.fit)
+        self.add(g, FIF.ALBUM, "Smooth transition",
+                 "Fades from the old wallpaper to the new one instead of switching instantly",
+                 self.switch("smooth_transition", True))
         self.add(g, FIF.ZOOM, "Match wallpapers to my screens",
                  "Only picks wallpapers big enough and the right shape, then crops them to your exact resolution",
                  self.switch("match_screens", True, lambda v: self.refresh_screens()))

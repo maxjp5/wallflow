@@ -19,6 +19,7 @@ NEXT_FLAG = os.path.join(core.DATA_DIR, "next.flag")
 class Controller(QObject):
     current_changed = Signal()            # current wallpaper or history changed
     history_changed = Signal()
+    favorites_changed = Signal()
     status = Signal(str, str)             # (kind: info|success|error, message)
     busy_changed = Signal(bool)
     tick = Signal(int, float, str)        # (seconds left, fraction elapsed, paused reason or "")
@@ -34,6 +35,7 @@ class Controller(QObject):
         self.settings = core.load_settings()
         self.pos = 0
         self.busy = False
+        self.fader = None                       # DesktopFade, set by the window (needs Qt widgets)
         self.next_change = time.time() + self.interval_seconds()
         self._fetched.connect(self._on_fetched)
         self._failed.connect(self._on_failed)
@@ -55,7 +57,7 @@ class Controller(QObject):
     # ---------------------------------------------------------- basics
 
     def interval_seconds(self):
-        return core.INTERVALS.get(self.settings["interval"], 30) * 60
+        return core.INTERVALS.get(self.settings["interval"], 30) * 60   # 0 = don't rotate
 
     def save(self):
         core.save_settings(self.settings)
@@ -87,6 +89,9 @@ class Controller(QObject):
         total = self.interval_seconds()
         if not self.settings["running"]:
             self.tick.emit(0, 0.0, "Paused")
+            return
+        if total == 0:
+            self.tick.emit(0, 0.0, "Not rotating. Press Next for a new wallpaper")
             return
         left = max(0, int(self.next_change - time.time()))
         if left == 0 and not self.busy:
@@ -148,11 +153,19 @@ class Controller(QObject):
         self.status.emit("error", msg)
 
     def apply(self, entry, add=False):
+        style = self.settings["style"]
+        fading = False
+        if self.fader and self.settings.get("smooth_transition", True):
+            fading = self.fader.cover(core.shown_wallpaper(), style)   # old picture on top
         try:
-            core.set_wallpaper(entry["path"], self.settings["style"])
+            core.set_wallpaper(entry["path"], style)                    # switch underneath it
         except Exception as e:  # noqa: BLE001
+            if fading:
+                self.fader.finish()
             self.status.emit("error", f"Couldn't set wallpaper: {e}")
             return
+        if fading:
+            self.fader.fade_out()                                       # reveal the new one smoothly
         if add:
             h = self.history()
             h.insert(0, entry)
@@ -189,16 +202,27 @@ class Controller(QObject):
         if self.current():
             self.apply(self.current())
 
-    def favorite(self, index=None):
-        h = self.history()
-        entry = h[index] if index is not None and 0 <= index < len(h) else self.current()
+    def toggle_favorite(self, entry):
+        """Heart button: save to favorites, or remove if it's already there."""
         if not entry:
             return
         try:
-            core.save_favorite(entry)
-            self.status.emit("success", "Saved to Pictures\\Wallflow Favorites")
+            if core.is_favorite(entry):
+                core.remove_favorite(entry)
+                self.status.emit("fav", "Removed from favorites")
+            else:
+                core.save_favorite(entry)
+                self.status.emit("fav", "Saved to favorites")
         except OSError as e:
-            self.status.emit("error", f"Couldn't save: {e}")
+            self.status.emit("error", f"Couldn't update favorites: {e}")
+            return
+        self.favorites_changed.emit()
+
+    def use_entry(self, entry):
+        """Set a wallpaper that isn't in history yet (e.g. from Favorites)."""
+        e = {k: v for k, v in entry.items() if k != "favorite"}
+        e["time"] = time.time()
+        self.apply(e, add=True)
 
     def open_page(self, index=None):
         h = self.history()

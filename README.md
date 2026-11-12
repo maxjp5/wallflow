@@ -1,3 +1,5 @@
+<p align="center"><img src="logo.png" width="128" alt="Wallflow logo"></p>
+
 # Wallflow
 
 An automatic wallpaper changer for Windows. Wallflow pulls fresh wallpapers from popular galleries on a timer, or rotates through packs you download for offline use.
@@ -14,7 +16,8 @@ An automatic wallpaper changer for Windows. Wallflow pulls fresh wallpapers from
 - **Offline packs**: download 24–200 wallpapers from a search in one go, then rotate through them without internet
 - Previous / Next, a clickable history of recent wallpapers, and ★ favorites saved to `Pictures\Wallflow Favorites`
 - Fill / Fit / Stretch / Center / Span
-- Native Windows 11 look (Fluent, Mica) with smooth animations, light/dark themes and accent colors
+- Two designs you can switch between: native **Windows 11** (Fluent, Mica) and **Liquid Glass**, where the window is your wallpaper with frosted panels
+- Smooth animations, light/dark themes and accent colors
 - Matches wallpapers to your monitors and crops them to your exact resolution
 - Pauses while you game or run on battery
 - Lives in the system tray, can start with Windows, and can restore your original wallpaper
@@ -55,7 +58,12 @@ This creates `dist\Wallflow\Wallflow.exe` and `release\Wallflow-Setup-<version>.
 | `ui_sources.py` | Sources page |
 | `ui_packs.py` | Packs page and the pack download dialog |
 | `ui_settings.py` | Settings page |
+| `ui_glass.py` | The Liquid Glass design |
+| `ui_feedback.py` | Favorite feedback for each design |
+| `shell.py` | Tray, close-to-tray, messages and design switching |
+| `desktop_fade.py` | Cross-fades the desktop when the wallpaper changes |
 | `theme.py` | Accent colors |
+| `make_icon.py` | Draws the logo (`wallflow.ico`, `logo.png`) |
 | `core.py` | Settings, downloading, screen detection, setting the wallpaper |
 | `sources.py` | One function per wallpaper source |
 | `installer.iss` / `build.ps1` | Builds the exe and the installer |

@@ -132,7 +132,11 @@ class SettingsPage(ScrollArea):
 
         # Appearance
         g = self.group("Appearance")
-        self.add(g, FIF.BRUSH, "Theme", "How the Wallflow window looks",
+        from shell import DESIGNS
+        self.add(g, FIF.LAYOUT, "Design",
+                 "Windows 11, or Liquid Glass where the window is your wallpaper. Wallflow restarts to switch",
+                 self.combo(DESIGNS, s.get("design", DESIGNS[0]), self.on_design))
+        self.add(g, FIF.BRUSH, "Theme", "How the Wallflow window looks (Liquid Glass is always dark)",
                  self.combo(list(THEMES), s.get("theme", "Dark"), self.on_theme))
         self.accentCard = SettingCard(FIF.PALETTE, "Accent color", "", self.view)
         row = QWidget(self.accentCard)
@@ -245,6 +249,23 @@ class SettingsPage(ScrollArea):
         setTheme(THEMES[v], lazy=True)
         for sw in self.swatches:
             sw.update()
+
+    def on_design(self, name):
+        if name == self.ctl.settings.get("design", "Windows 11"):
+            return
+        box = MessageBox(f"Switch to {name}?", "Wallflow will close and reopen in the new design. "
+                         "You can switch back here any time.", self.window())
+        box.yesButton.setText("Switch")
+        box.cancelButton.setText("Cancel")
+        if box.exec():
+            self.ctl.set_option("design", name)
+            self.ctl.restart()
+        else:
+            combo = self.sender()
+            if combo:
+                combo.blockSignals(True)
+                combo.setCurrentText(self.ctl.settings.get("design", "Windows 11"))
+                combo.blockSignals(False)
 
     def on_accent(self, name):
         self.ctl.accent.set(name)

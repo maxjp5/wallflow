@@ -9,7 +9,6 @@ import os
 import sys
 import time
 import traceback
-import webbrowser
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -17,29 +16,25 @@ import core  # noqa: E402
 from controller import NEXT_FLAG, SHOW_FLAG  # noqa: E402
 
 
-def resource(name):
-    """Path to a bundled file, both from source and inside the packaged exe."""
-    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, name)
-
-
 def build_window(ctl):
-    from PySide6.QtCore import QSize, Qt
-    from PySide6.QtGui import QIcon
-    from PySide6.QtWidgets import QApplication, QSystemTrayIcon
-    from qfluentwidgets import (Action, FluentIcon as FIF, FluentWindow, InfoBar, InfoBarPosition,
-                                NavigationItemPosition, PushButton, SystemTrayMenu)
+    """Create the window for the design chosen in Settings (Windows 11 or Liquid Glass)."""
+    if ctl.settings.get("design") == "Liquid Glass":
+        from ui_glass import GlassWindow
+        return GlassWindow(ctl)
 
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QIcon
+    from qfluentwidgets import FluentIcon as FIF, FluentWindow, NavigationItemPosition
+
+    from shell import ShellMixin, resource
     from ui_home import FavoritesPage, HomePage
     from ui_packs import PacksPage
     from ui_settings import SettingsPage
     from ui_sources import SourcesPage
 
-    class MainWindow(FluentWindow):
+    class MainWindow(ShellMixin, FluentWindow):
         def __init__(self):
             super().__init__()
-            self.ctl = ctl
-            self.quitting = False
             self.setWindowTitle("Wallflow")
             self.setWindowIcon(QIcon(resource("wallflow.ico")))
             self.resize(1180, 800)
@@ -48,8 +43,8 @@ def build_window(ctl):
             self.setMicaEffectEnabled(ctl.settings.get("mica", True))
 
             self.home = HomePage(ctl, self)
-            self.sources = SourcesPage(ctl, self)
             self.favorites = FavoritesPage(ctl, self)
+            self.sources = SourcesPage(ctl, self)
             self.packs = PacksPage(ctl, self)
             self.settings_page = SettingsPage(ctl, self, self)
             self.addSubInterface(self.home, FIF.HOME, "Home")
@@ -57,77 +52,8 @@ def build_window(ctl):
             self.addSubInterface(self.sources, FIF.GLOBE, "Sources")
             self.addSubInterface(self.packs, FIF.LIBRARY, "Packs")
             self.addSubInterface(self.settings_page, FIF.SETTING, "Settings", NavigationItemPosition.BOTTOM)
-
-            ctl.status.connect(self.on_status)
-            ctl.show_requested.connect(self.bring_up)
-            ctl.update_found.connect(self.on_update)
-            self.build_tray()
+            self.setup_shell(ctl)
             self.center()
-
-        def center(self):
-            geo = QApplication.primaryScreen().availableGeometry()
-            self.move(geo.center().x() - self.width() // 2, geo.center().y() - self.height() // 2)
-
-        # ---------------------------------------------------- tray
-        def build_tray(self):
-            self.tray = QSystemTrayIcon(QIcon(resource("wallflow.ico")), self)
-            self.tray.setToolTip("Wallflow")
-            menu = SystemTrayMenu(parent=self)
-            self.pauseAct = Action(FIF.PAUSE, "Pause auto-change", triggered=lambda: ctl.set_running(
-                not ctl.settings["running"]))
-            menu.addActions([
-                Action(FIF.HOME, "Open Wallflow", triggered=self.bring_up),
-                Action(FIF.SYNC, "Next wallpaper", triggered=ctl.next_new),
-                self.pauseAct,
-            ])
-            menu.addSeparator()
-            menu.addAction(Action(FIF.CLOSE, "Quit", triggered=self.quit_app))
-            self.tray.setContextMenu(menu)
-            self.tray.activated.connect(
-                lambda r: self.bring_up() if r in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick) else None)
-            ctl.running_changed.connect(self.on_running)
-            self.on_running(ctl.settings["running"])
-            self.tray.show()
-
-        def on_running(self, on):
-            self.pauseAct.setText("Pause auto-change" if on else "Resume auto-change")
-            self.pauseAct.setIcon(FIF.PAUSE.icon() if on else FIF.PLAY.icon())
-
-        def bring_up(self):
-            self.showNormal()
-            self.raise_()
-            self.activateWindow()
-
-        def closeEvent(self, e):
-            if not self.quitting and ctl.settings.get("close_to_tray", True):
-                e.ignore()
-                self.hide()
-            else:
-                ctl.save()
-                self.tray.hide()
-                e.accept()
-                QApplication.quit()
-
-        def quit_app(self):
-            self.quitting = True
-            self.close()
-
-        # ---------------------------------------------------- messages
-        def on_status(self, kind, msg):
-            if not self.isVisible():
-                return
-            if kind == "error":
-                InfoBar.error("Something went wrong", msg, duration=6000,
-                              position=InfoBarPosition.TOP_RIGHT, parent=self)
-            elif kind == "fav":
-                InfoBar.success(msg, "", duration=2000, position=InfoBarPosition.TOP_RIGHT, parent=self)
-
-        def on_update(self, ver, url):
-            bar = InfoBar.info(f"Wallflow {ver} is available", "A newer version is on GitHub.",
-                               duration=-1, position=InfoBarPosition.BOTTOM_RIGHT, parent=self)
-            btn = PushButton("Download")
-            btn.clicked.connect(lambda: webbrowser.open(url))
-            bar.addWidget(btn)
 
     return MainWindow()
 
@@ -149,7 +75,10 @@ def main():
     ctl = Controller()
     from desktop_fade import DesktopFade
     ctl.fader = DesktopFade()
-    setTheme({"Light": Theme.LIGHT, "System": Theme.AUTO}.get(ctl.settings.get("theme"), Theme.DARK))
+    theme = {"Light": Theme.LIGHT, "System": Theme.AUTO}.get(ctl.settings.get("theme"), Theme.DARK)
+    if ctl.settings.get("design") == "Liquid Glass":
+        theme = Theme.DARK                      # white text reads best on glass
+    setTheme(theme)
     from theme import AccentManager
     ctl.accent = AccentManager(ctl.settings)
     win = build_window(ctl)

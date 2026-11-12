@@ -12,6 +12,7 @@ from qfluentwidgets import (BodyLabel, CaptionLabel, ComboBox, FlowLayout, Fluen
                             TransparentToolButton, isDarkTheme, themeColor)
 
 import core
+from ui_feedback import favorite_feedback
 
 TILE_W, TILE_H = 224, 126      # minimum tile size; tiles grow to fill the row
 THUMB = (512, 288)             # decoded once per image, scaled when drawn
@@ -257,6 +258,16 @@ class Gallery(QWidget):
         self.fit()
         self.mark(current)
 
+    def heart_button(self, index):
+        return self.tiles[index].heartBtn if 0 <= index < len(self.tiles) else None
+
+    def toggle(self, ctl, entry, index):
+        """Toggle a favorite from a tile and play the matching feedback."""
+        btn = self.heart_button(index)
+        saved = ctl.toggle_favorite(entry)
+        if saved is not None and btn is not None:
+            favorite_feedback(btn, saved)
+
     def mark(self, current):
         for t in self.tiles:
             t.setCurrent(t.index == current)
@@ -320,7 +331,7 @@ class NowCard(SimpleCardWidget):
         row.setSpacing(4)
         self.prevBtn = self._tool(FIF.LEFT_ARROW, "Previous wallpaper", ctl.previous)
         self.pauseBtn = self._tool(FIF.PAUSE, "Pause auto-change", lambda: ctl.set_running(not ctl.settings["running"]))
-        self.saveBtn = self._tool(FIF.HEART, "Save to favorites", lambda: ctl.toggle_favorite(ctl.current()))
+        self.saveBtn = self._tool(FIF.HEART, "Save to favorites", self.on_heart)
         self.saveBtn.setIconSize(QSize(16, 16))
         self.pageBtn = self._tool(FIF.LINK, "Open source page", ctl.open_page)
         for b in (self.prevBtn, self.pauseBtn, self.saveBtn, self.pageBtn):
@@ -365,6 +376,11 @@ class NowCard(SimpleCardWidget):
         self.sub.setText(f"{self.ctl.source_label(e['source'])}  ·  {when}")
         self.prevBtn.setEnabled(self.ctl.pos + 1 < len(self.ctl.history()))
         self.refresh_heart()
+
+    def on_heart(self):
+        saved = self.ctl.toggle_favorite(self.ctl.current())
+        if saved is not None:
+            favorite_feedback(self.saveBtn, saved)
 
     def refresh_heart(self):
         fav = core.is_favorite(self.ctl.current())
@@ -437,7 +453,7 @@ class HomePage(Page):
         lay.addLayout(head)
         self.gallery = Gallery(parent=self.view)
         self.gallery.clicked.connect(ctl.pick)
-        self.gallery.heart.connect(lambda i: ctl.toggle_favorite(ctl.history()[i]))
+        self.gallery.heart.connect(lambda i: self.gallery.toggle(ctl, ctl.history()[i], i))
         lay.addWidget(self.gallery)
         self.empty = BodyLabel("Your recent wallpapers show up here.", self.view)
         lay.addWidget(self.empty)
@@ -490,7 +506,7 @@ class FavoritesPage(Page):
         self.items = []
         self.gallery = Gallery("Set as wallpaper", self.view)
         self.gallery.clicked.connect(lambda i: ctl.use_entry(self.items[i]))
-        self.gallery.heart.connect(lambda i: ctl.toggle_favorite(self.items[i]))
+        self.gallery.heart.connect(lambda i: self.gallery.toggle(ctl, self.items[i], i))
         lay.addWidget(self.gallery)
         self.empty = BodyLabel("Click the heart on any wallpaper to keep it here.", self.view)
         lay.addWidget(self.empty)

@@ -203,20 +203,22 @@ class Controller(QObject):
             self.apply(self.current())
 
     def toggle_favorite(self, entry):
-        """Heart button: save to favorites, or remove if it's already there."""
+        """Heart button: save to favorites, or remove if it's already there.
+        Returns True when saved, False when removed, None on error."""
         if not entry:
-            return
+            return None
         try:
             if core.is_favorite(entry):
                 core.remove_favorite(entry)
-                self.status.emit("fav", "Removed from favorites")
+                saved = False
             else:
                 core.save_favorite(entry)
-                self.status.emit("fav", "Saved to favorites")
+                saved = True
         except OSError as e:
             self.status.emit("error", f"Couldn't update favorites: {e}")
-            return
+            return None
         self.favorites_changed.emit()
+        return saved
 
     def use_entry(self, entry):
         """Set a wallpaper that isn't in history yet (e.g. from Favorites)."""

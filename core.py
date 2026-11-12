@@ -18,7 +18,7 @@ from PIL import Image, ImageOps
 import sources
 
 APP_NAME = "Wallflow"
-VERSION = "1.2.2"
+VERSION = "1.3.0"
 DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
@@ -55,6 +55,7 @@ DEFAULTS = {
     "theme": "Dark",
     "accent": "White",
     "mica": True,
+    "design": "Windows 11",     # or "Liquid Glass"
     "smooth_transition": True,  # cross-fade the desktop when the wallpaper changes
     "pause_on_battery": False,
     "pause_fullscreen": True,   # don't change while a game / full-screen app / presentation is up
@@ -346,10 +347,31 @@ def set_startup(enabled):
                 pass
 
 
+_instance_handle = None
+
+
 def single_instance():
     """Return True if this is the only running copy."""
-    ctypes.windll.kernel32.CreateMutexW(None, False, "Wallflow_SingleInstance_Mutex")
+    global _instance_handle
+    _instance_handle = ctypes.windll.kernel32.CreateMutexW(None, False, "Wallflow_SingleInstance_Mutex")
     return ctypes.windll.kernel32.GetLastError() != 183  # ERROR_ALREADY_EXISTS
+
+
+def release_instance():
+    """Let a new copy start (used when restarting to switch design)."""
+    global _instance_handle
+    if _instance_handle:
+        ctypes.windll.kernel32.CloseHandle(_instance_handle)
+        _instance_handle = None
+
+
+def relaunch_command():
+    if getattr(sys, "frozen", False):
+        return [sys.executable]
+    exe = sys.executable
+    if exe.lower().endswith("python.exe"):
+        exe = exe[:-10] + "pythonw.exe"
+    return [exe, os.path.join(os.path.dirname(os.path.abspath(__file__)), "Wallflow.pyw")]
 
 
 # ---------------------------------------------------------------- fetching

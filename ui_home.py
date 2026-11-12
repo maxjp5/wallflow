@@ -190,6 +190,9 @@ class Tile(QWidget):
         self.heartBtn.setVisible(self.favorite)
         self._animate(0.0)
 
+    def mousePressEvent(self, e):
+        e.accept()          # claim the press so a parent (e.g. the frameless glass window) doesn't start a drag
+
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.LeftButton and self.rect().contains(e.position().toPoint()):
             self.clicked.emit(self.index)

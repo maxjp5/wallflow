@@ -643,14 +643,22 @@ class GlassWindow(ShellMixin, QWidget):
     def mousePressEvent(self, e):
         if e.button() != Qt.LeftButton:
             return
-        edges = self._edges(e.position().toPoint())
+        pos = e.position().toPoint()
+        edges = self._edges(pos)
         if edges:
             self.windowHandle().startSystemResize(edges)
-        else:
+        elif self._is_drag_area(pos):
             self.windowHandle().startSystemMove()
 
+    def _is_drag_area(self, pos):
+        """Drag only from the wallpaper itself or a glass panel's own background,
+        never from content inside a page (tiles, lists, text)."""
+        w = self.childAt(pos)
+        return w is None or w in (self.nav, self.bar, self.winBar)
+
     def mouseDoubleClickEvent(self, e):
-        self.toggle_max()
+        if self._is_drag_area(e.position().toPoint()):
+            self.toggle_max()
 
 
 def _elide(text, n):

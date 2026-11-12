@@ -18,7 +18,7 @@ from PIL import Image, ImageOps
 import sources
 
 APP_NAME = "Wallflow"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")

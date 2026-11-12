@@ -107,6 +107,38 @@ class SettingsPage(ScrollArea):
         self._tail(self.screens, btn)
         g.addSettingCard(self.screens)
 
+        # Dark wallpapers
+        g = self.group("Dark wallpapers")
+        self.darkSw = SwitchButton(self.view)
+        self.darkSw.setChecked(bool(s.get("dark_enabled")))
+        self.darkSw.checkedChanged.connect(ctl.set_dark_enabled)
+        ctl.dark_changed.connect(self._sync_dark)
+        self.add(g, FIF.QUIET_HOURS, "Only dark wallpapers",
+                 "So a bright wallpaper never blinds you. Also on the moon button next to the player", self.darkSw)
+        self.add(g, FIF.CALENDAR, "When",
+                 "At night uses the hours below. Windows dark mode follows Settings > Personalization > Colors",
+                 self.combo(core.DARK_WHEN, s.get("dark_when", "At night"), lambda v: self.ctl.set_option("dark_when", v)))
+        hours = QWidget(self.view)
+        hl = QHBoxLayout(hours)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(8)
+        for key, label in (("night_start", "From"), ("night_end", "to")):
+            from qfluentwidgets import BodyLabel
+            hl.addWidget(BodyLabel(label, hours))
+            c = ComboBox(hours)
+            c.addItems(core.HOURS)
+            c.setCurrentText(s.get(key, "20:00" if key == "night_start" else "07:00"))
+            c.currentTextChanged.connect(lambda v, k=key: self.ctl.set_option(k, v))
+            hl.addWidget(c)
+        self.add(g, FIF.DATE_TIME, "Night hours", "When \"At night\" counts as night", hours)
+        self.add(g, FIF.BRIGHTNESS, "How dark",
+                 "Very dark only allows deep, night-style images. If none is found, a wallpaper is dimmed instead",
+                 self.combo(list(core.DARK_LEVELS), s.get("dark_level", "Dark"),
+                            lambda v: self.ctl.set_option("dark_level", v)))
+        self.add(g, FIF.SYNC, "Switch right away when night starts",
+                 "If the current wallpaper is bright, it changes to a dark one immediately",
+                 self.switch("dark_switch_now", True))
+
         # Startup
         g = self.group("Startup")
         startup = SwitchButton(self.view)
@@ -249,6 +281,11 @@ class SettingsPage(ScrollArea):
         setTheme(THEMES[v], lazy=True)
         for sw in self.swatches:
             sw.update()
+
+    def _sync_dark(self, on):
+        self.darkSw.blockSignals(True)
+        self.darkSw.setChecked(on)
+        self.darkSw.blockSignals(False)
 
     def on_design(self, name):
         if name == self.ctl.settings.get("design", "Windows 11"):

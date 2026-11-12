@@ -9,7 +9,8 @@ from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (BodyLabel, CaptionLabel, ComboBox, FlowLayout, FluentIcon as FIF,
                             PrimaryPushButton, ProgressBar, PushButton, ScrollArea, SimpleCardWidget,
                             StrongBodyLabel, SubtitleLabel, SwitchButton, ToolTipFilter,
-                            TransparentToolButton, isDarkTheme, themeColor)
+                            TransparentToggleToolButton, TransparentToolButton, isDarkTheme,
+                            themeColor)
 
 import core
 from ui_feedback import favorite_feedback
@@ -337,7 +338,13 @@ class NowCard(SimpleCardWidget):
         self.saveBtn = self._tool(FIF.HEART, "Save to favorites", self.on_heart)
         self.saveBtn.setIconSize(QSize(16, 16))
         self.pageBtn = self._tool(FIF.LINK, "Open source page", ctl.open_page)
-        for b in (self.prevBtn, self.pauseBtn, self.saveBtn, self.pageBtn):
+        self.darkBtn = TransparentToggleToolButton(FIF.QUIET_HOURS, self)
+        self.darkBtn.installEventFilter(ToolTipFilter(self.darkBtn))
+        self.darkBtn.setChecked(bool(ctl.settings.get("dark_enabled")))
+        self.darkBtn.toggled.connect(ctl.set_dark_enabled)
+        ctl.dark_changed.connect(self.on_dark)
+        self.on_dark(bool(ctl.settings.get("dark_enabled")))
+        for b in (self.prevBtn, self.pauseBtn, self.saveBtn, self.darkBtn, self.pageBtn):
             row.addWidget(b)
         self.nextBtn = PrimaryPushButton(FIF.SYNC, "Next wallpaper", self)
         self.nextBtn.clicked.connect(ctl.forward)
@@ -399,7 +406,14 @@ class NowCard(SimpleCardWidget):
         else:
             h, rem = divmod(left, 3600)
             m, s = divmod(rem, 60)
-            self.time.setText(f"Next change in {h}:{m:02d}:{s:02d}" if h else f"Next change in {m}:{s:02d}")
+            t = f"Next change in {h}:{m:02d}:{s:02d}" if h else f"Next change in {m}:{s:02d}"
+            self.time.setText(t + ("  ·  Dark wallpapers only" if self.ctl.dark_active() else ""))
+
+    def on_dark(self, on):
+        self.darkBtn.blockSignals(True)
+        self.darkBtn.setChecked(on)
+        self.darkBtn.blockSignals(False)
+        self.darkBtn.setToolTip("Dark wallpapers: on. Click to turn off" if on else "Dark wallpapers: off. Click so night never gets a bright wallpaper")
 
     def on_busy(self, busy):
         self.nextBtn.setEnabled(not busy)

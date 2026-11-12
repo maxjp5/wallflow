@@ -108,11 +108,15 @@ def wallhaven(cfg, screen, page=None):
     }
     if sort == "toplist":
         params["topRange"] = WALLHAVEN_RANGES.get(cfg.get("range", "Past month"), "1M")
+    if cfg.get("_dark"):
+        params["colors"] = "000000"          # Wallhaven color filter: images with lots of black
     if key:
         params["apikey"] = key
     data = get_json("https://wallhaven.cc/api/v1/search?" + urllib.parse.urlencode(params))
     if not data.get("data") and page is None and params["page"] > 1:
         return wallhaven(cfg, screen, page=1)
+    if not data.get("data") and cfg.get("_dark"):          # too narrow with the color filter: drop it
+        return wallhaven({**cfg, "_dark": False}, screen, page)
     return _wallhaven_items(data, 1280)
 
 

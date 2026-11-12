@@ -419,7 +419,13 @@ class GlassWindow(ShellMixin, QWidget):
         self.heartBtn.clicked.connect(self.on_heart)
         self.timeBtn = GlassButton(FIF.STOP_WATCH, "How often it changes", 40, self.bar)
         self.timeBtn.clicked.connect(self.interval_menu)
-        for b in (self.prevBtn, self.pauseBtn, self.nextBtn, self.heartBtn, self.timeBtn):
+        self.darkBtn = GlassButton(FIF.QUIET_HOURS, "", 40, self.bar)
+        self.darkBtn.setCheckable(True)
+        self.darkBtn.setChecked(bool(ctl.settings.get("dark_enabled")))
+        self.darkBtn.clicked.connect(lambda: ctl.set_dark_enabled(self.darkBtn.isChecked()))
+        ctl.dark_changed.connect(self.on_dark)
+        self.on_dark(bool(ctl.settings.get("dark_enabled")))
+        for b in (self.prevBtn, self.pauseBtn, self.nextBtn, self.heartBtn, self.darkBtn, self.timeBtn):
             bl.addWidget(b)
 
         # Center: a frosted sheet that holds the other pages
@@ -528,7 +534,13 @@ class GlassWindow(ShellMixin, QWidget):
             h, rem = divmod(left, 3600)
             m, s = divmod(rem, 60)
             t = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
-            self.sub.setText(f"{base}  ·  next in {t}")
+            dark = "  ·  dark only" if self.ctl.dark_active() else ""
+            self.sub.setText(f"{base}  ·  next in {t}{dark}")
+
+    def on_dark(self, on):
+        self.darkBtn.setChecked(on)
+        self.darkBtn.setToolTip("Dark wallpapers: on. Click to turn off" if on else "Dark wallpapers: off. Click so night never gets a bright wallpaper")
+        self.darkBtn.pop()
 
     def on_busy(self, busy):
         self.nextBtn.setEnabled(not busy)

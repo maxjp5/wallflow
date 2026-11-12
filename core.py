@@ -13,12 +13,12 @@ import sys
 import time
 import winreg
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageEnhance, ImageOps, ImageStat
 
 import sources
 
 APP_NAME = "Wallflow"
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
@@ -56,7 +56,13 @@ DEFAULTS = {
     "accent": "White",
     "mica": True,
     "design": "Windows 11",     # or "Liquid Glass"
-    "smooth_transition": True,  # cross-fade the desktop when the wallpaper changes
+    "smooth_transition": True,
+    "dark_enabled": False,      # only pick dark wallpapers (see dark_when)
+    "dark_when": "At night",    # At night | Always | When Windows is dark
+    "dark_level": "Dark",       # Dark | Very dark
+    "night_start": "20:00",
+    "night_end": "07:00",
+    "dark_switch_now": True,    # swap a bright wallpaper as soon as night starts  # cross-fade the desktop when the wallpaper changes
     "pause_on_battery": False,
     "pause_fullscreen": True,   # don't change while a game / full-screen app / presentation is up
     "check_updates": True,
@@ -374,15 +380,96 @@ def relaunch_command():
     return [exe, os.path.join(os.path.dirname(os.path.abspath(__file__)), "Wallflow.pyw")]
 
 
+# ---------------------------------------------------------------- dark wallpapers
+
+DARK_WHEN = ["At night", "Always", "When Windows is dark"]
+DARK_LEVELS = {  # name -> (max average brightness 0-255, max share of near-white pixels)
+    "Dark": (85, 0.05),
+    "Very dark": (55, 0.01),
+}
+HOURS = [f"{h:02d}:00" for h in range(24)]
+
+
+class TooBright(ValueError):
+    pass
+
+
+def windows_is_dark():
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize") as k:
+            return winreg.QueryValueEx(k, "AppsUseLightTheme")[0] == 0
+    except OSError:
+        return False
+
+
+def is_night(settings, now=None):
+    now = now or time.localtime()
+    h = now.tm_hour + now.tm_min / 60
+    start = int(settings.get("night_start", "20:00")[:2])
+    end = int(settings.get("night_end", "07:00")[:2])
+    return (start <= h or h < end) if start > end else (start <= h < end)
+
+
+def dark_active(settings):
+    """Should Wallflow only pick dark wallpapers right now?"""
+    if not settings.get("dark_enabled"):
+        return False
+    when = settings.get("dark_when", "At night")
+    if when == "Always":
+        return True
+    if when == "When Windows is dark":
+        return windows_is_dark()
+    return is_night(settings)
+
+
+def brightness(img):
+    """(average brightness 0-255, share of near-white pixels) of a PIL image."""
+    small = img.convert("L")
+    small.thumbnail((320, 320))
+    hist = small.histogram()
+    total = sum(hist) or 1
+    return ImageStat.Stat(small).mean[0], sum(hist[201:]) / total
+
+
+def is_dark_enough(img, level="Dark"):
+    mean, white = brightness(img)
+    max_mean, max_white = DARK_LEVELS.get(level, DARK_LEVELS["Dark"])
+    return mean <= max_mean and white <= max_white
+
+
+def path_is_dark(path, level="Dark"):
+    try:
+        with Image.open(path) as im:
+            im.draft("RGB", (640, 360))
+            return is_dark_enough(im, level)
+    except OSError:
+        return True
+
+
+def dim_to_dark(img, level="Dark"):
+    """Darken a bright image until it passes, so night never gets a blinding wallpaper."""
+    for factor in (0.7, 0.55, 0.42, 0.32, 0.24):
+        out = ImageEnhance.Brightness(img).enhance(factor)
+        if is_dark_enough(out, level):
+            return out
+    return out
+
+
 # ---------------------------------------------------------------- fetching
 
-def download_image(cand, dest_dir=CACHE_DIR, name=None, target=None):
+def download_image(cand, dest_dir=CACHE_DIR, name=None, target=None, dark=None, dim=False):
     """Download/convert a candidate to a jpg in dest_dir and return its path.
 
     Local jpg/png/bmp files are used in place (no copy)."""
     if cand.local:
-        if cand.url.lower().endswith((".jpg", ".jpeg", ".png", ".bmp")):
+        if cand.url.lower().endswith((".jpg", ".jpeg", ".png", ".bmp")) and not dark:
             return cand.url
+        if dark and not dim and path_is_dark(cand.url, dark):
+            if cand.url.lower().endswith((".jpg", ".jpeg", ".png", ".bmp")):
+                return cand.url
+        elif dark and not dim:
+            raise TooBright("too bright for night")
         with open(cand.url, "rb") as f:
             raw = f.read()
     else:
@@ -405,6 +492,11 @@ def download_image(cand, dest_dir=CACHE_DIR, name=None, target=None):
         img = ImageOps.fit(img.convert("RGB"), (tw, th), Image.LANCZOS)   # exact fit, centered crop
     if max(img.size) > 15360:
         img.thumbnail((15360, 15360))
+    if dark and not is_dark_enough(img, dark):
+        if not dim:
+            raise TooBright("too bright for night")
+        img = dim_to_dark(img.convert("RGB"), dark)              # last resort: dim it
+        name = (name or hashlib.sha1(cand.url.encode()).hexdigest()[:16]).replace(".jpg", "") + "_dim.jpg"
     img = img.convert("RGB")
     name = name or hashlib.sha1(cand.url.encode()).hexdigest()[:16] + ".jpg"
     os.makedirs(dest_dir, exist_ok=True)
@@ -421,11 +513,13 @@ def fetch_new(settings, screen, log=lambda m: None):
     random.shuffle(enabled)
     seen = set(settings["seen"])
     errors = []
+    too_bright = []
+    dark = settings.get("dark_level", "Dark") if dark_active(settings) else None
     for key in enabled:
         label, fn = sources.SOURCES[key]
         log(f"Searching {label}…")
         match = settings.get("match_screens", True)
-        cfg = {**settings["sources"][key], "_match": match}
+        cfg = {**settings["sources"][key], "_match": match, "_dark": bool(dark)}
         try:
             cands = fn(cfg, screen)
         except Exception as e:  # noqa: BLE001 - surface any source failure
@@ -433,16 +527,30 @@ def fetch_new(settings, screen, log=lambda m: None):
             continue
         fresh = [c for c in cands if c.url not in seen] or cands
         random.shuffle(fresh)
-        for cand in fresh[:6]:
+        for cand in fresh[:12 if dark else 6]:
             try:
-                log(f"Downloading from {label}…")
-                path = download_image(cand, target=screen if match else None)
+                log(f"Looking for a dark wallpaper on {label}…" if dark else f"Downloading from {label}…")
+                path = download_image(cand, target=screen if match else None, dark=dark)
+            except TooBright:
+                too_bright.append((key, cand))
+                continue
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{label}: {e}")
                 continue
             settings["seen"] = (settings["seen"] + [cand.url])[-1500:]
             return {"path": path, "source": key, "title": cand.title,
-                    "page": cand.page, "ping": cand.ping, "time": time.time()}
+                    "page": cand.page, "ping": cand.ping, "time": time.time(), "dark": bool(dark)}
+    for key, cand in too_bright[:3]:               # nothing dark found: dim a bright one instead
+        try:
+            log("Dimming a wallpaper for night…")
+            path = download_image(cand, target=screen if settings.get("match_screens", True) else None,
+                                  dark=dark, dim=True)
+        except Exception as e:  # noqa: BLE001
+            errors.append(str(e))
+            continue
+        settings["seen"] = (settings["seen"] + [cand.url])[-1500:]
+        return {"path": path, "source": key, "title": cand.title + " (dimmed for night)",
+                "page": cand.page, "ping": cand.ping, "time": time.time(), "dark": True}
     raise RuntimeError("Couldn't get a wallpaper. " + (errors[-1] if errors else ""))
 
 

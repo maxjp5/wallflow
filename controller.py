@@ -25,6 +25,7 @@ class Controller(QObject):
     busy_changed = Signal(bool)
     tick = Signal(int, float, str)        # (seconds left, fraction elapsed, paused reason or "")
     running_changed = Signal(bool)
+    dark_changed = Signal(bool)           # dark-wallpaper toggle switched on/off
     show_requested = Signal()
     quit_requested = Signal()
     update_found = Signal(str, str)       # (version, url)
@@ -38,6 +39,8 @@ class Controller(QObject):
         self.pos = 0
         self.busy = False
         self.fader = None                       # DesktopFade, set by the window (needs Qt widgets)
+        self._dark_was = None                   # was "dark only" active on the last check?
+        self._dark_check = 0
         self.next_change = time.time() + self.interval_seconds()
         self._fetched.connect(self._on_fetched)
         self._failed.connect(self._on_failed)
@@ -92,6 +95,7 @@ class Controller(QObject):
             _remove(NEXT_FLAG)
             self.next_new()
 
+        self._check_dark()
         total = self.interval_seconds()
         if not self.settings["running"]:
             self.tick.emit(0, 0.0, "Paused")
@@ -108,6 +112,42 @@ class Controller(QObject):
                 return
             self.next_new()
         self.tick.emit(left, 1 - left / total if total else 0, "")
+
+    # ---------------------------------------------------------- dark wallpapers
+
+    def dark_active(self):
+        return core.dark_active(self.settings)
+
+    def set_dark_enabled(self, on):
+        self.settings["dark_enabled"] = bool(on)
+        self.save()
+        self._dark_was = None                   # re-check right away
+        self._dark_check = 0
+        self.dark_changed.emit(bool(on))
+
+    def _check_dark(self):
+        """When 'dark only' becomes active (e.g. night starts), swap a bright wallpaper right away."""
+        self._dark_check -= 1
+        if self._dark_check > 0:
+            return
+        self._dark_check = 30                   # every 30 seconds is plenty
+        active = self.dark_active()
+        if active and self._dark_was is not True:
+            self._dark_pending = self.settings.get("dark_switch_now", True)   # night just started
+        if not active:
+            self._dark_pending = False
+        self._dark_was = active
+        if not getattr(self, "_dark_pending", False) or self.busy:
+            return
+        cur = self.current()
+        if not cur or core.path_is_dark(cur["path"], self.settings.get("dark_level", "Dark")):
+            self._dark_pending = False              # already dark: nothing to do
+            return
+        if self.pause_reason():
+            return                                  # gaming / full screen: try again on the next check
+        self._dark_pending = False
+        self.status.emit("info", "It's dark-wallpaper time: finding a dark one…")
+        self.next_new()
 
     def pause_reason(self):
         s = self.settings

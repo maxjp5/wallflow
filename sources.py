@@ -67,8 +67,19 @@ def _wallhaven_items(data, w_min):
     return out
 
 
+WALLHAVEN_RATIOS = {"16x9": 16 / 9, "16x10": 1.6, "21x9": 64 / 27, "32x9": 32 / 9, "48x9": 48 / 9,
+                    "4x3": 4 / 3, "5x4": 1.25, "3x2": 1.5}
+
+
+def nearest_ratio(w, h):
+    import math
+    r = w / h
+    return min(WALLHAVEN_RATIOS, key=lambda k: abs(math.log(WALLHAVEN_RATIOS[k] / r)))
+
+
 def wallhaven(cfg, screen, page=None):
-    w, h = min(screen[0], 1920), min(screen[1], 1080)
+    match = cfg.get("_match")
+    w, h = (screen if match else (min(screen[0], 1920), min(screen[1], 1080)))
     key = cfg.get("api_key", "").strip()
     sort = WALLHAVEN_SORTS.get(cfg.get("sort", "Random"), "random")
 
@@ -92,7 +103,7 @@ def wallhaven(cfg, screen, page=None):
         "purity": "100",                                                # SFW only
         "sorting": sort,
         "atleast": f"{w}x{h}",
-        "ratios": "landscape",
+        "ratios": nearest_ratio(w, h) if match else "landscape",
         "page": page or (1 if sort == "random" else random.randint(1, 3)),
     }
     if sort == "toplist":
@@ -103,6 +114,16 @@ def wallhaven(cfg, screen, page=None):
     if not data.get("data") and page is None and params["page"] > 1:
         return wallhaven(cfg, screen, page=1)
     return _wallhaven_items(data, 1280)
+
+
+def wallhaven_count(cfg, screen):
+    """How many Wallhaven results match these settings (for the Settings page)."""
+    match = cfg.get("_match")
+    w, h = screen
+    params = {"q": cfg.get("query", "").strip(), "categories": "1" + ("1" if cfg.get("anime") else "0") + "0",
+              "purity": "100", "atleast": f"{w}x{h}", "ratios": nearest_ratio(w, h) if match else "landscape"}
+    return get_json("https://wallhaven.cc/api/v1/search?" + urllib.parse.urlencode(params)).get(
+        "meta", {}).get("total", 0)
 
 
 # ---------------------------------------------------------------- Unsplash
@@ -156,7 +177,9 @@ def unsplash(cfg, screen, page=None):
         ping = item.get("links", {}).get("download_location", "")
         if ping:
             ping += ("&" if "?" in ping else "?") + "client_id=" + key
-        out.append(Candidate(f"{raw}&w={screen[0]}&q=90&fm=jpg&fit=max", "unsplash",
+        size = (f"&w={screen[0]}&h={screen[1]}&fit=crop&crop=entropy" if cfg.get("_match")
+                else f"&w={screen[0]}&fit=max")
+        out.append(Candidate(f"{raw}{size}&q=90&fm=jpg", "unsplash",
                              f"{desc[:90]} — by {who}", item.get("links", {}).get("html", ""),
                              ping=ping))
     return out
@@ -185,6 +208,8 @@ def nasa(cfg, screen, page=None):
 
 def picsum(cfg, screen, page=None):
     w, h = screen
+    if w > 5000:                      # Picsum's size limit; the image is scaled to fit afterwards
+        w, h = 5000, round(h * 5000 / w)
     out = []
     for _ in range(6 if page else 1):
         seed = random.randint(1, 10_000_000)

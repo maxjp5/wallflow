@@ -1,6 +1,7 @@
 """Settings, downloading, and Windows wallpaper plumbing."""
 import copy
 import ctypes
+import ctypes.wintypes
 import hashlib
 import io
 import json
@@ -12,12 +13,12 @@ import sys
 import time
 import winreg
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 import sources
 
 APP_NAME = "Wallflow"
-VERSION = "1.0.0"
+VERSION = "1.2.0"
 DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), APP_NAME)
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
@@ -45,7 +46,16 @@ DEFAULTS = {
         "packs": {"enabled": False, "selected": []},
     },
     "start_with_windows": False,
+    "start_hidden": True,       # when started by Windows, stay in the tray
+    "change_on_start": False,   # new wallpaper every time Wallflow starts
     "close_to_tray": True,
+    "theme": "Dark",
+    "accent": "White",
+    "mica": True,
+    "pause_on_battery": False,
+    "pause_fullscreen": True,   # don't change while a game / full-screen app / presentation is up
+    "check_updates": True,
+    "match_screens": True,      # only pick wallpapers that fit your monitors, cropped to exact size
     "keep_history": 40,
     "history": [],          # newest first: {path, source, title, page, time}
     "seen": [],             # URLs already shown
@@ -92,14 +102,72 @@ DESKTOP_KEY = r"Control Panel\Desktop"
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
-def screen_size():
-    u = ctypes.windll.user32
+def _dpi_aware():
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)   # real pixels, not scaled ones
     except Exception:
         pass
+
+
+def screen_size():
+    _dpi_aware()
+    u = ctypes.windll.user32
     w, h = u.GetSystemMetrics(0), u.GetSystemMetrics(1)
     return (w, h) if w >= 640 else (1920, 1080)
+
+
+class _MonitorInfo(ctypes.Structure):
+    _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", ctypes.wintypes.RECT),
+                ("rcWork", ctypes.wintypes.RECT), ("dwFlags", ctypes.c_ulong)]
+
+
+def monitors():
+    """Every connected monitor as {x, y, w, h, primary}, primary first."""
+    _dpi_aware()
+    out = []
+    proc = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p,
+                              ctypes.POINTER(ctypes.wintypes.RECT), ctypes.c_void_p)
+
+    def found(hmon, _hdc, _rect, _data):
+        info = _MonitorInfo()
+        info.cbSize = ctypes.sizeof(_MonitorInfo)
+        if ctypes.windll.user32.GetMonitorInfoW(ctypes.c_void_p(hmon), ctypes.byref(info)):
+            r = info.rcMonitor
+            out.append({"x": r.left, "y": r.top, "w": r.right - r.left, "h": r.bottom - r.top,
+                        "primary": bool(info.dwFlags & 1)})
+        return 1
+
+    try:
+        ctypes.windll.user32.EnumDisplayMonitors(None, None, proc(found), None)
+    except OSError:
+        pass
+    if not out:
+        w, h = screen_size()
+        out = [{"x": 0, "y": 0, "w": w, "h": h, "primary": True}]
+    out.sort(key=lambda m: (not m["primary"], m["x"], m["y"]))
+    return out
+
+
+def target_size(settings, mons=None):
+    """The exact wallpaper size that fits your screens.
+
+    Span: one image across the whole desktop. Otherwise: your main screen's shape,
+    big enough for your largest landscape screen."""
+    mons = mons or monitors()
+    if settings.get("style") == "Span" and len(mons) > 1:
+        left = min(m["x"] for m in mons)
+        top = min(m["y"] for m in mons)
+        right = max(m["x"] + m["w"] for m in mons)
+        bottom = max(m["y"] + m["h"] for m in mons)
+        return right - left, bottom - top
+    p = mons[0]
+    scale = max([1.0] + [max(m["w"] / p["w"], m["h"] / p["h"]) for m in mons if m["w"] >= m["h"]])
+    return round(p["w"] * scale), round(p["h"] * scale)
+
+
+def wallpaper_size(settings):
+    """Size to request from sources: exact fit when matching screens, else main screen."""
+    return target_size(settings) if settings.get("match_screens", True) else screen_size()
 
 
 def set_wallpaper(path, style="Fill"):
@@ -145,12 +213,63 @@ def restore_original(settings):
 
 def launch_command():
     if getattr(sys, "frozen", False):          # running as the packaged Wallflow.exe
-        return f'"{sys.executable}" --minimized'
+        return f'"{sys.executable}" --autostart'
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Wallflow.pyw")
     exe = sys.executable
     if exe.lower().endswith("python.exe"):
         exe = exe[:-10] + "pythonw.exe"
-    return f'"{exe}" "{script}" --minimized'
+    return f'"{exe}" "{script}" --autostart'
+
+
+class _PowerStatus(ctypes.Structure):
+    _fields_ = [("ACLineStatus", ctypes.c_ubyte), ("BatteryFlag", ctypes.c_ubyte),
+                ("BatteryLifePercent", ctypes.c_ubyte), ("SystemStatusFlag", ctypes.c_ubyte),
+                ("BatteryLifeTime", ctypes.c_ulong), ("BatteryFullLifeTime", ctypes.c_ulong)]
+
+
+def on_battery():
+    st = _PowerStatus()
+    if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(st)):
+        return False
+    return st.ACLineStatus == 0 and st.BatteryFlag != 128   # 128 = no battery (desktop PC)
+
+
+def fullscreen_app_running():
+    """True while a game, full-screen video/app or presentation is in front."""
+    state = ctypes.c_int(0)
+    try:
+        if ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state)) != 0:
+            return False
+    except (AttributeError, OSError):
+        return False
+    return state.value in (2, 3, 4)   # BUSY, RUNNING_D3D_FULL_SCREEN, PRESENTATION_MODE
+
+
+GITHUB_REPO = "maxjp5/wallflow"
+
+
+def latest_release():
+    """(version, page_url) of the newest GitHub release."""
+    data = sources.get_json(f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
+                            {"Accept": "application/vnd.github+json"})
+    return data.get("tag_name", "").lstrip("v"), data.get("html_url", "")
+
+
+def is_newer(version, than=VERSION):
+    def parts(v):
+        return tuple(int(x) for x in re.findall(r"\d+", v)[:3]) or (0,)
+    return parts(version) > parts(than)
+
+
+def folder_size(folder):
+    total = 0
+    for root, _dirs, files in os.walk(folder):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
 
 
 def set_startup(enabled):
@@ -172,7 +291,7 @@ def single_instance():
 
 # ---------------------------------------------------------------- fetching
 
-def download_image(cand, dest_dir=CACHE_DIR, name=None):
+def download_image(cand, dest_dir=CACHE_DIR, name=None, target=None):
     """Download/convert a candidate to a jpg in dest_dir and return its path.
 
     Local jpg/png/bmp files are used in place (no copy)."""
@@ -192,8 +311,15 @@ def download_image(cand, dest_dir=CACHE_DIR, name=None):
     w, h = img.size
     if not cand.local and (w < 1280 or w < h):
         raise ValueError(f"not wallpaper-shaped ({w}x{h})")
-    if max(w, h) > 7680:
-        img.thumbnail((7680, 7680))
+    if target and not cand.local:
+        tw, th = target
+        if w < tw * 0.8 or h < th * 0.8:
+            raise ValueError(f"too small for your screen ({w}x{h} < {tw}x{th})")
+        if abs((w / h) / (tw / th) - 1) > 0.25:
+            raise ValueError(f"wrong shape for your screen ({w}x{h})")
+        img = ImageOps.fit(img.convert("RGB"), (tw, th), Image.LANCZOS)   # exact fit, centered crop
+    if max(img.size) > 15360:
+        img.thumbnail((15360, 15360))
     img = img.convert("RGB")
     name = name or hashlib.sha1(cand.url.encode()).hexdigest()[:16] + ".jpg"
     os.makedirs(dest_dir, exist_ok=True)
@@ -213,8 +339,10 @@ def fetch_new(settings, screen, log=lambda m: None):
     for key in enabled:
         label, fn = sources.SOURCES[key]
         log(f"Searching {label}…")
+        match = settings.get("match_screens", True)
+        cfg = {**settings["sources"][key], "_match": match}
         try:
-            cands = fn(settings["sources"][key], screen)
+            cands = fn(cfg, screen)
         except Exception as e:  # noqa: BLE001 - surface any source failure
             errors.append(f"{label}: {e}")
             continue
@@ -223,7 +351,7 @@ def fetch_new(settings, screen, log=lambda m: None):
         for cand in fresh[:6]:
             try:
                 log(f"Downloading from {label}…")
-                path = download_image(cand)
+                path = download_image(cand, target=screen if match else None)
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{label}: {e}")
                 continue
@@ -270,7 +398,7 @@ def list_packs():
 
 
 def download_pack(name, source_key, cfg, screen, count, progress=lambda done, total, msg: None,
-                  cancelled=lambda: False):
+                  cancelled=lambda: False, match=False):
     """Download up to `count` new images from a source into a pack folder.
 
     Re-running with the same name tops the pack up with images it doesn't have yet."""
@@ -283,7 +411,7 @@ def download_pack(name, source_key, cfg, screen, count, progress=lambda done, to
     while done < count and page <= 40 and empty_pages < 3 and not cancelled():
         progress(done, count, f"Looking through {label}, page {page}…")
         try:
-            cands = fn(cfg, screen, page=page)
+            cands = fn({**cfg, "_match": match}, screen, page=page)
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(f"{label}: {e}") from e
         new = [c for c in cands if c.url not in have]
@@ -293,7 +421,7 @@ def download_pack(name, source_key, cfg, screen, count, progress=lambda done, to
                 break
             fname = f"{source_key}_{hashlib.sha1(cand.url.encode()).hexdigest()[:12]}.jpg"
             try:
-                download_image(cand, folder, fname)
+                download_image(cand, folder, fname, target=screen if match else None)
             except Exception:  # noqa: BLE001 - skip images that fail or aren't wallpaper-shaped
                 have.add(cand.url)
                 continue

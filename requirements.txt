@@ -1,3 +1,2 @@
-customtkinter
+PySide6-Fluent-Widgets
 pillow
-pystray

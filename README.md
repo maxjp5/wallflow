@@ -14,6 +14,9 @@ An automatic wallpaper changer for Windows. Wallflow pulls fresh wallpapers from
 - **Offline packs**: download 24–200 wallpapers from a search in one go, then rotate through them without internet
 - Previous / Next, a clickable history of recent wallpapers, and ★ favorites saved to `Pictures\Wallflow Favorites`
 - Fill / Fit / Stretch / Center / Span
+- Native Windows 11 look (Fluent, Mica) with smooth animations, light/dark themes and accent colors
+- Matches wallpapers to your monitors and crops them to your exact resolution
+- Pauses while you game or run on battery
 - Lives in the system tray, can start with Windows, and can restore your original wallpaper
 - Safe-for-work content only
 
@@ -25,7 +28,7 @@ Download **`Wallflow-Setup-x.y.z.exe`** from the [Releases](../../releases) page
 
 ## Run from source
 
-Requires Python 3.10+.
+Requires Python 3.10+ (built with PySide6 and PySide6-Fluent-Widgets).
 
 ```
 pip install -r requirements.txt
@@ -46,11 +49,16 @@ This creates `dist\Wallflow\Wallflow.exe` and `release\Wallflow-Setup-<version>.
 
 | File | What it does |
 |---|---|
-| `Wallflow.pyw` | The window, timer, pack downloader and tray icon |
-| `core.py` | Settings, downloading, setting the wallpaper, start-with-Windows |
+| `Wallflow.pyw` | Starts the app: single instance, tray, main window |
+| `controller.py` | The engine the window talks to: timer, fetching, history |
+| `ui_home.py` | Home page: now-showing card, progress bar, animated gallery |
+| `ui_sources.py` | Sources page |
+| `ui_packs.py` | Packs page and the pack download dialog |
+| `ui_settings.py` | Settings page |
+| `theme.py` | Accent colors |
+| `core.py` | Settings, downloading, screen detection, setting the wallpaper |
 | `sources.py` | One function per wallpaper source |
-| `installer.iss` | Inno Setup installer script |
-| `build.ps1` | Builds the exe and the installer |
+| `installer.iss` / `build.ps1` | Builds the exe and the installer |
 
 ## Where data is stored
 

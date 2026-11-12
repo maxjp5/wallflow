@@ -8,7 +8,12 @@ Write-Host "Building Wallflow $version"
 
 python -m pip install --quiet -r requirements.txt pyinstaller
 python -m PyInstaller --noconfirm --clean --windowed --name Wallflow --icon wallflow.ico `
-    --add-data "wallflow.ico;." --collect-data customtkinter --hidden-import pystray._win32 Wallflow.pyw
+    --add-data "wallflow.ico;." --collect-submodules qfluentwidgets `
+    --exclude-module tkinter --exclude-module customtkinter --exclude-module pystray `
+    --exclude-module PySide6.QtWebEngineCore --exclude-module PySide6.QtWebEngineWidgets `
+    --exclude-module PySide6.Qt3DCore --exclude-module PySide6.QtQuick --exclude-module PySide6.QtQml `
+    --exclude-module PySide6.QtMultimedia --exclude-module PySide6.QtCharts --exclude-module PySide6.QtPdf `
+    --exclude-module scipy --exclude-module numpy Wallflow.pyw
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
 $iscc = Get-ChildItem "$env:LOCALAPPDATA\Programs\Inno Setup*\ISCC.exe", "C:\Program Files*\Inno Setup*\ISCC.exe" `

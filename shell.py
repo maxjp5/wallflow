@@ -36,6 +36,7 @@ class ShellMixin:
         self.quitting = False
         ctl.status.connect(self.on_status)
         ctl.show_requested.connect(self.bring_up)
+        ctl.quit_requested.connect(self.quit_app)
         ctl.update_found.connect(self.on_update)
         ctl.restart = lambda: restart_app(ctl)
         self.build_tray()

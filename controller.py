@@ -14,6 +14,7 @@ import sources
 
 SHOW_FLAG = os.path.join(core.DATA_DIR, "show.flag")
 NEXT_FLAG = os.path.join(core.DATA_DIR, "next.flag")
+QUIT_FLAG = os.path.join(core.DATA_DIR, "quit.flag")
 
 
 class Controller(QObject):
@@ -25,6 +26,7 @@ class Controller(QObject):
     tick = Signal(int, float, str)        # (seconds left, fraction elapsed, paused reason or "")
     running_changed = Signal(bool)
     show_requested = Signal()
+    quit_requested = Signal()
     update_found = Signal(str, str)       # (version, url)
     update_result = Signal(str, str, str)
     _fetched = Signal(object)
@@ -82,6 +84,10 @@ class Controller(QObject):
         if os.path.exists(SHOW_FLAG):
             _remove(SHOW_FLAG)
             self.show_requested.emit()
+        if os.path.exists(QUIT_FLAG):
+            _remove(QUIT_FLAG)
+            self.quit_requested.emit()
+            return
         if os.path.exists(NEXT_FLAG):
             _remove(NEXT_FLAG)
             self.next_new()

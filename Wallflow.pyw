@@ -4,6 +4,7 @@ Double-click to start. Closing the window keeps it running in the tray.
   --autostart   started by Windows (stays hidden if that setting is on)
   --minimized   start hidden in the tray
   --next        change to a new wallpaper (talks to the running copy if there is one)
+  --quit        close the running copy cleanly (used by the installer)
 """
 import os
 import sys
@@ -13,7 +14,7 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import core  # noqa: E402
-from controller import NEXT_FLAG, SHOW_FLAG  # noqa: E402
+from controller import NEXT_FLAG, QUIT_FLAG, SHOW_FLAG  # noqa: E402
 
 
 def build_window(ctl):
@@ -59,6 +60,16 @@ def build_window(ctl):
 
 
 def main():
+    if "--quit" in sys.argv:
+        if not core.single_instance():                 # a copy is running: ask it to close
+            os.makedirs(core.DATA_DIR, exist_ok=True)
+            open(QUIT_FLAG, "w").close()
+            for _ in range(50):                         # wait up to 5 s for it to exit
+                time.sleep(0.1)
+                if not os.path.exists(QUIT_FLAG):
+                    break
+            time.sleep(0.5)
+        return
     if not core.single_instance():
         # Hand the request to the running copy (it checks these files every second).
         os.makedirs(core.DATA_DIR, exist_ok=True)

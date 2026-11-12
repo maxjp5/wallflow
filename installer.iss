@@ -23,7 +23,6 @@ UninstallDisplayIcon={app}\{#MyAppExe}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-AppMutex=Wallflow_SingleInstance_Mutex
 CloseApplications=yes
 
 [Tasks]
@@ -44,4 +43,25 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: 
 Filename: "{app}\{#MyAppExe}"; Description: "Launch Wallflow"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
+; Close Wallflow cleanly first (removes its tray icon), then make sure it's gone.
+Filename: "{app}\{#MyAppExe}"; Parameters: "--quit"; Flags: runhidden waituntilterminated; RunOnceId: "QuitWallflow"
 Filename: "{sys}\taskkill.exe"; Parameters: "/IM {#MyAppExe} /F"; Flags: runhidden; RunOnceId: "KillWallflow"
+
+[Code]
+// Before installing over a running copy, ask it to close cleanly so no ghost tray icon is left.
+// Only when Wallflow is actually running, and never waits more than ~5 seconds.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code, I: Integer;
+begin
+  if CheckForMutexes('Wallflow_SingleInstance_Mutex') and FileExists(ExpandConstant('{app}\{#MyAppExe}')) then
+  begin
+    Exec(ExpandConstant('{app}\{#MyAppExe}'), '--quit', '', SW_HIDE, ewNoWait, Code);
+    for I := 1 to 50 do
+    begin
+      if not CheckForMutexes('Wallflow_SingleInstance_Mutex') then Break;
+      Sleep(100);
+    end;
+  end;
+  Result := '';
+end;

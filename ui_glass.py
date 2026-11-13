@@ -339,6 +339,7 @@ class RecentPage(Page):
         self.gallery = Gallery(parent=self.view)
         self.gallery.clicked.connect(ctl.pick)
         self.gallery.heart.connect(lambda i: self.gallery.toggle(ctl, ctl.history()[i], i))
+        self.gallery.info.connect(ctl.open_page)
         self.lay.addWidget(self.gallery)
         self.lay.addStretch(1)
         ctl.history_changed.connect(lambda: self.gallery.set_entries(ctl.history(), ctl.pos))
@@ -428,6 +429,10 @@ class GlassWindow(ShellMixin, QWidget):
         for b in (self.prevBtn, self.pauseBtn, self.nextBtn, self.heartBtn, self.darkBtn, self.timeBtn):
             bl.addWidget(b)
 
+        # Bottom left: where this wallpaper came from
+        self.infoBtn = GlassButton(FIF.INFO, "Open source page", 36, self)
+        self.infoBtn.clicked.connect(lambda: ctl.open_page())
+
         # Center: a frosted sheet that holds the other pages
         self.sheet = GlassPanel(self, radius=24, tint=QColor(16, 16, 20, 150))
         sl = QVBoxLayout(self.sheet)
@@ -509,6 +514,8 @@ class GlassWindow(ShellMixin, QWidget):
             when = time.strftime("%b %d, %I:%M %p", time.localtime(e.get("time", time.time())))
             self.base_sub = f"{self.ctl.source_label(e['source'])}  ·  {when}"
             self.sub.setText(self.base_sub)
+            self.infoBtn.setToolTip(f"Open source: {self.ctl.source_label(e['source'])}")
+        self.infoBtn.setVisible(bool(e and e.get("page")))
         self.refresh_heart()
         self.fade.stop()
         if animate:
@@ -618,6 +625,7 @@ class GlassWindow(ShellMixin, QWidget):
         self.winBar.move(W - self.winBar.width() - 16, 16)
         bw = min(860, W - 2 * 96)
         self.bar.setGeometry((W - bw) // 2 + 30, H - 92, bw, 72)
+        self.infoBtn.move(22, H - 22 - self.infoBtn.height())
         if self.sheet.isVisible():
             self.sheet.setGeometry(self.sheet_geometry())
         self.winBar.raise_()

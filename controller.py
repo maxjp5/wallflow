@@ -274,7 +274,10 @@ class Controller(QObject):
 
     def open_page(self, index=None):
         h = self.history()
-        entry = h[index] if index is not None and 0 <= index < len(h) else self.current()
+        self.open_entry(h[index] if index is not None and 0 <= index < len(h) else self.current())
+
+    def open_entry(self, entry):
+        """Open where a wallpaper came from: its web page, or its folder for local images."""
         if not entry or not entry.get("page"):
             return
         if entry["source"] in ("local", "packs") and os.path.exists(entry["page"]):

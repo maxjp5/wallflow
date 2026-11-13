@@ -5,7 +5,7 @@ import time
 from PySide6.QtCore import (Property, QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt,
                             QTimer, Signal)
 from PySide6.QtGui import QColor, QIcon, QImageReader, QPainter, QPainterPath, QPixmap
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (BodyLabel, CaptionLabel, ComboBox, FlowLayout, FluentIcon as FIF,
                             PrimaryPushButton, ProgressBar, PushButton, ScrollArea, SimpleCardWidget,
                             StrongBodyLabel, SubtitleLabel, SwitchButton, ToolTipFilter,
@@ -122,13 +122,69 @@ def heart_icon(filled, size=32):
     return QIcon(pm)
 
 
+class InfoDot(QAbstractButton):
+    """Small round 'i' that sits on an image and opens where the picture came from.
+    Dark frosted circle so it reads on bright and dark wallpapers alike."""
+    SIZE = 24
+
+    def __init__(self, tip="Open source page", parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(tip)
+        self.installEventFilter(ToolTipFilter(self))
+        self._hover = 0.0
+        self.ani = QPropertyAnimation(self, b"hoverv", self)
+        self.ani.setDuration(150)
+        self.ani.setEasingCurve(QEasingCurve.OutCubic)
+
+    def getHover(self):
+        return self._hover
+
+    def setHover(self, v):
+        self._hover = v
+        self.update()
+
+    hoverv = Property(float, getHover, setHover)
+
+    def _to(self, v):
+        self.ani.stop()
+        self.ani.setStartValue(self._hover)
+        self.ani.setEndValue(v)
+        self.ani.start()
+
+    def enterEvent(self, e):
+        self._to(1.0)
+
+    def leaveEvent(self, e):
+        self._to(0.0)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        h = self._hover
+        r = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        p.setPen(QColor(255, 255, 255, int(70 + 60 * h)))
+        p.setBrush(QColor(0, 0, 0, int(105 + 60 * h)))
+        p.drawEllipse(r)
+        # the "i": a dot and a rounded stem, drawn so it stays crisp at any scale
+        c = r.center()
+        s = self.width() / 24
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255))
+        p.drawEllipse(QRectF(c.x() - 1.5 * s, c.y() - 6 * s, 3 * s, 3 * s))
+        p.drawRoundedRect(QRectF(c.x() - 1.3 * s, c.y() - 1.5 * s, 2.6 * s, 7.5 * s), 1.3 * s, 1.3 * s)
+
+
 class Tile(QWidget):
     """Gallery tile: lifts and darkens on hover, accent ring when it's the current wallpaper.
     A filled heart stays visible on favorites."""
     clicked = Signal(int)
     heart = Signal(int)
+    info = Signal(int)
 
-    def __init__(self, index, path, favorite=False, hover_text="Set as wallpaper", parent=None):
+    def __init__(self, index, path, favorite=False, hover_text="Set as wallpaper", parent=None,
+                 has_source=True):
         super().__init__(parent)
         self.index = index
         self.hover_text = hover_text
@@ -148,6 +204,10 @@ class Tile(QWidget):
         self.heartBtn.setIconSize(QSize(18, 18))
         self.heartBtn.installEventFilter(ToolTipFilter(self.heartBtn))
         self.heartBtn.clicked.connect(lambda: self.heart.emit(self.index))
+        self.has_source = has_source
+        self.infoBtn = InfoDot("Open source page", self)
+        self.infoBtn.clicked.connect(lambda: self.info.emit(self.index))
+        self.infoBtn.hide()
         self.setFavorite(favorite)
         self._place_heart()
 
@@ -160,6 +220,7 @@ class Tile(QWidget):
 
     def _place_heart(self):
         self.heartBtn.move(self.tw - 40, int(12 - 3 * self._hover))
+        self.infoBtn.move(10, int(self.th - 31 - 3 * self._hover))
 
     def getHover(self):
         return self._hover
@@ -185,10 +246,12 @@ class Tile(QWidget):
 
     def enterEvent(self, e):
         self.heartBtn.show()
+        self.infoBtn.setVisible(self.has_source)
         self._animate(1.0)
 
     def leaveEvent(self, e):
         self.heartBtn.setVisible(self.favorite)
+        self.infoBtn.hide()
         self._animate(0.0)
 
     def mousePressEvent(self, e):
@@ -237,6 +300,7 @@ class Gallery(QWidget):
     """Animated, responsive grid of tiles that stretch to fill each row."""
     clicked = Signal(int)
     heart = Signal(int)
+    info = Signal(int)
 
     def __init__(self, hover_text="Set as wallpaper", parent=None):
         super().__init__(parent)
@@ -254,9 +318,10 @@ class Gallery(QWidget):
             t.deleteLater()
         self.tiles = []
         for i, e in enumerate(entries):
-            t = Tile(i, e["path"], core.is_favorite(e), self.hover_text, self)
+            t = Tile(i, e["path"], core.is_favorite(e), self.hover_text, self, bool(e.get("page")))
             t.clicked.connect(self.clicked)
             t.heart.connect(self.heart)
+            t.info.connect(self.info)
             self.flow.addWidget(t)
             self.tiles.append(t)
         self.fit()
@@ -308,6 +373,10 @@ class NowCard(SimpleCardWidget):
         lay.setSpacing(16)
 
         self.image = FadeImage(192, 108, 8, self)
+        self.infoBtn = InfoDot("Open source page", self.image)
+        self.infoBtn.move(8, self.image.height() - InfoDot.SIZE - 8)
+        self.infoBtn.clicked.connect(lambda: ctl.open_page())
+        self.infoBtn.hide()
         lay.addWidget(self.image)
 
         mid = QVBoxLayout()
@@ -385,6 +454,8 @@ class NowCard(SimpleCardWidget):
         when = time.strftime("%b %d, %I:%M %p", time.localtime(e.get("time", time.time())))
         self.sub.setText(f"{self.ctl.source_label(e['source'])}  ·  {when}")
         self.prevBtn.setEnabled(self.ctl.pos + 1 < len(self.ctl.history()))
+        self.infoBtn.setVisible(bool(e.get("page")))
+        self.infoBtn.setToolTip(f"Open source: {self.ctl.source_label(e['source'])}")
         self.refresh_heart()
 
     def on_heart(self):
@@ -471,6 +542,7 @@ class HomePage(Page):
         self.gallery = Gallery(parent=self.view)
         self.gallery.clicked.connect(ctl.pick)
         self.gallery.heart.connect(lambda i: self.gallery.toggle(ctl, ctl.history()[i], i))
+        self.gallery.info.connect(ctl.open_page)
         lay.addWidget(self.gallery)
         self.empty = BodyLabel("Your recent wallpapers show up here.", self.view)
         lay.addWidget(self.empty)
@@ -524,6 +596,7 @@ class FavoritesPage(Page):
         self.gallery = Gallery("Set as wallpaper", self.view)
         self.gallery.clicked.connect(lambda i: ctl.use_entry(self.items[i]))
         self.gallery.heart.connect(lambda i: self.gallery.toggle(ctl, self.items[i], i))
+        self.gallery.info.connect(lambda i: ctl.open_entry(self.items[i]))
         lay.addWidget(self.gallery)
         self.empty = BodyLabel("Click the heart on any wallpaper to keep it here.", self.view)
         lay.addWidget(self.empty)

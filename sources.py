@@ -184,7 +184,7 @@ def unsplash(cfg, screen, page=None):
         size = (f"&w={screen[0]}&h={screen[1]}&fit=crop&crop=entropy" if cfg.get("_match")
                 else f"&w={screen[0]}&fit=max")
         out.append(Candidate(f"{raw}{size}&q=90&fm=jpg", "unsplash",
-                             f"{desc[:90]} — by {who}", item.get("links", {}).get("html", ""),
+                             f"{desc[:90]}, by {who}", item.get("links", {}).get("html", ""),
                              ping=ping))
     return out
 

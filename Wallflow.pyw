@@ -1,4 +1,4 @@
-"""Wallflow — an automatic wallpaper changer for Windows 11.
+"""Wallflow: an automatic wallpaper changer for Windows 11.
 
 Double-click to start. Closing the window keeps it running in the tray.
   --autostart   started by Windows (stays hidden if that setting is on)

@@ -334,7 +334,7 @@ class SettingsPage(ScrollArea):
         else:
             tail = f"wallpapers are cropped to {tw} × {th} ({sources.nearest_ratio(tw, th).replace('x', ':')})"
         self.screens.setTitle(f"Your screens · {len(mons)} detected")
-        self.screens.setContent(f"{', '.join(parts)} — {tail}")
+        self.screens.setContent(f"{', '.join(parts)}. {tail[0].upper() + tail[1:]}")
 
     def refresh_storage(self):
         n = len(self.ctl.history())
